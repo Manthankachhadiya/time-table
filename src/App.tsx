@@ -13,6 +13,7 @@ import ConflictsPage from './pages/ConflictsPage';
 import ChangeHistoryPage from './pages/ChangeHistoryPage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
+import ChatBot from './components/Common/ChatBot';
 
 const PAGES: Record<string, React.ReactNode> = {
   'dashboard': <DashboardPage />,
@@ -43,6 +44,7 @@ export default function App() {
           {PAGES[activePage] || <DashboardPage />}
         </main>
       </div>
+      <ChatBot />
     </div>
   );
 }
