@@ -1,5 +1,5 @@
-import { TimetableSlot, Faculty, Classroom, Conflict, Subject, Timetable } from './types';
-import { TIME_SLOTS, DAYS } from './constants';
+import { TimetableSlot, Faculty, Classroom, Conflict, Subject, Timetable, Batch } from './types';
+import { TIME_SLOTS, DAYS, BATCHES_PER_DIVISION } from './constants';
 
 // Constraint Validator
 export function validateConstraints(
@@ -12,12 +12,16 @@ export function validateConstraints(
   let conflictId = 1;
 
   // 1. Faculty double-booking detection
+  // NOTE: Lab-batch slots are EXCLUDED — multiple batches of the same lab can share
+  // the same faculty in the same slot (different rooms). This is intentional and valid.
   const facultySlotMap: Record<string, string[]> = {};
-  slots.forEach(slot => {
-    const key = `${slot.facultyId}-${slot.day}-${slot.timeSlot}`;
-    if (!facultySlotMap[key]) facultySlotMap[key] = [];
-    facultySlotMap[key].push(slot.id);
-  });
+  slots
+    .filter(s => !(s.type === 'Lab' && s.batch)) // exclude lab-batch slots
+    .forEach(slot => {
+      const key = `${slot.facultyId}-${slot.day}-${slot.timeSlot}`;
+      if (!facultySlotMap[key]) facultySlotMap[key] = [];
+      facultySlotMap[key].push(slot.id);
+    });
   Object.entries(facultySlotMap).forEach(([key, ids]) => {
     if (ids.length > 1) {
       const [facultyId, day, time] = key.split('-');
@@ -32,6 +36,7 @@ export function validateConstraints(
       });
     }
   });
+
 
   // 2. Classroom double-booking
   const classroomSlotMap: Record<string, string[]> = {};
@@ -56,8 +61,6 @@ export function validateConstraints(
   });
 
   // 3. Faculty availability check
-  // ONLY check if the faculty has explicitly set availability constraints.
-  // If availability array is empty, it means NO restrictions (available everywhere).
   slots.forEach(slot => {
     const faculty = faculties.find(f => f.id === slot.facultyId);
     if (faculty && faculty.availability.length > 0) {
@@ -98,7 +101,6 @@ export function validateConstraints(
 export function evaluateFitness(slots: TimetableSlot[], conflicts: Conflict[]): number {
   let score = 100;
 
-  // Deduct for unresolved conflicts
   const unresolvedHigh = conflicts.filter(c => !c.resolved && c.severity === 'High').length;
   const unresolvedMedium = conflicts.filter(c => !c.resolved && c.severity === 'Medium').length;
   const unresolvedLow = conflicts.filter(c => !c.resolved && c.severity === 'Low').length;
@@ -107,7 +109,6 @@ export function evaluateFitness(slots: TimetableSlot[], conflicts: Conflict[]): 
   score -= unresolvedMedium * 7;
   score -= unresolvedLow * 3;
 
-  // Check for idle gaps per faculty per day
   const facultyDaySlots: Record<string, string[]> = {};
   slots.forEach(slot => {
     const key = `${slot.facultyId}-${slot.day}`;
@@ -125,7 +126,7 @@ export function evaluateFitness(slots: TimetableSlot[], conflicts: Conflict[]): 
 
     for (let i = 1; i < sortedSlots.length; i++) {
       const gap = sortedSlots[i] - sortedSlots[i - 1] - 1;
-      if (gap > 0) score -= gap * 2; // Penalty for idle gaps
+      if (gap > 0) score -= gap * 2;
     }
   });
 
@@ -161,13 +162,17 @@ export function getWorkloadData(slots: TimetableSlot[], faculties: Faculty[]) {
 }
 
 /**
- * Generate a REAL, compact timetable for a given department/semester/division.
- * 
- * - Fills the week compactly: Monday first, then Tuesday, etc.
- * - Time slots are filled top-to-bottom (morning to evening) per day.
- * - Labs are scheduled as contiguous 2-hour blocks.
- * - Cross-semester conflicts are prevented by checking existingTimetables.
- * - The same faculty won't be double-booked across different semester timetables.
+ * Generate a timetable for a given department/semester/division.
+ *
+ * Lab model (matching real college timetable):
+ *  - EVERY day has ONE 2-hour lab period at a DIFFERENT time slot
+ *  - In each lab period: all 4 batches are in labs SIMULTANEOUSLY
+ *  - Each batch does a DIFFERENT subject's lab that day (rotation)
+ *  - Preferred lab times cycle: 15:30 → 13:15 → 10:45 → 15:30 → ...
+ *
+ * Lecture model:
+ *  - Lectures fill remaining slots, max 1 per subject per day (Pass 1)
+ *  - Remaining hours filled in Pass 2
  */
 export function generateSchedule(
   subjects: Subject[],
@@ -179,7 +184,7 @@ export function generateSchedule(
   const slots: TimetableSlot[] = [];
   let slotId = 1;
 
-  // Filter subjects for the selected department + semester + division
+  // Filter subjects for this department + semester + division
   const activeSubjects = subjects.filter(
     s =>
       s.department === config.department &&
@@ -189,72 +194,59 @@ export function generateSchedule(
 
   if (activeSubjects.length === 0) return [];
 
-  // ─── Build "already occupied" sets from existing timetables ───
+  // ── Build "already occupied" sets from existing timetables ──────────────────
   const occupiedFacultySlots = new Set<string>();
   const occupiedRoomSlots = new Set<string>();
 
   existingTimetables.forEach(tt => {
-    // Skip timetables for the same semester+division (we're regenerating those)
-    if (tt.semester === config.semester && tt.division === config.division && tt.department === config.department) {
-      return;
-    }
+    if (
+      tt.semester === config.semester &&
+      tt.division === config.division &&
+      tt.department === config.department
+    ) return;
     tt.slots.forEach(slot => {
       occupiedFacultySlots.add(`${slot.facultyId}||${slot.day}||${slot.timeSlot}`);
       occupiedRoomSlots.add(`${slot.classroomId}||${slot.day}||${slot.timeSlot}`);
     });
   });
 
-  // Working sets for this timetable
   const usedFacultySlots = new Set<string>(occupiedFacultySlots);
-  const usedRoomSlots = new Set<string>(occupiedRoomSlots);
-  const classSchedule = new Set<string>(); // this division's schedule (no two lectures at same time)
+  const usedRoomSlots    = new Set<string>(occupiedRoomSlots);
+  const classSchedule    = new Set<string>(); // this division's occupied slots
 
   const getKey = (a: string, b: string, c: string) => `${a}||${b}||${c}`;
 
-  // Separate labs and lectures
-  const labSubjects = activeSubjects.filter(s => s.type === 'Lab');
+  const labSubjects     = activeSubjects.filter(s => s.type === 'Lab');
   const lectureSubjects = activeSubjects.filter(s => s.type !== 'Lab');
 
-  // ─── Build the schedule grid: fill day-by-day, slot-by-slot ───
-  // This creates a compact, realistic timetable
-
-  // Create a pool of (subject, remaining hours) to schedule
   interface ScheduleItem { subject: Subject; remaining: number; }
   const lecturePool: ScheduleItem[] = lectureSubjects.map(s => ({ subject: s, remaining: s.hoursPerWeek }));
-  
-  // Shuffle the pool to get variation between different generated options
+
+  // Shuffle lecture pool for variety
   for (let i = lecturePool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [lecturePool[i], lecturePool[j]] = [lecturePool[j], lecturePool[i]];
   }
 
-  // Track how many times each subject is scheduled per day (max 1 per day ideally)
   const subjectDayCount: Record<string, number> = {};
   const getSubjectDayKey = (subId: string, day: string) => `${subId}||${day}`;
 
-  // Helper to find an available room for a day+time
   const findRoom = (day: string, time: string): Classroom | null => {
     for (const room of classrooms) {
       if (!room.isAvailable) continue;
-      if (!usedRoomSlots.has(getKey(room.id, day, time))) {
-        return room;
-      }
+      if (!usedRoomSlots.has(getKey(room.id, day, time))) return room;
     }
     return null;
   };
 
-  // Helper to check if a faculty is free at a given day+time
-  const isFacultyFree = (facultyId: string, day: string, time: string): boolean => {
-    return !usedFacultySlots.has(getKey(facultyId, day, time));
-  };
+  const isFacultyFree = (facultyId: string, day: string, time: string): boolean =>
+    !usedFacultySlots.has(getKey(facultyId, day, time));
 
-  // Helper to check if the class (division) is free at a given day+time
-  const isClassFree = (day: string, time: string): boolean => {
-    return !classSchedule.has(getKey('class', day, time));
-  };
+  const isClassFree = (day: string, time: string): boolean =>
+    !classSchedule.has(getKey('class', day, time));
 
-  // Helper to add a slot
-  const addSlot = (subject: Subject, day: string, time: string, room: Classroom, isLabCont: boolean = false) => {
+  // Helper to add a regular lecture/tutorial slot
+  const addSlot = (subject: Subject, day: string, time: string, room: Classroom, isLabCont = false) => {
     const facultyName = faculties.find(f => f.id === subject.facultyId)?.name || 'Unknown';
     slots.push({
       id: `gen-slot-${slotId++}`,
@@ -278,61 +270,126 @@ export function generateSchedule(
     classSchedule.add(getKey('class', day, time));
   };
 
-  // ─── PASS 1: Schedule LAB sessions first (need 2 contiguous hours) ───
-  const shuffledLabDays = [...DAYS].sort(() => Math.random() - 0.5);
-  
-  for (const labSubject of labSubjects) {
-    let scheduled = false;
+  // Helper to add a lab slot (with batch tag)
+  const addLabSlot = (
+    subject: Subject, day: string, time: string,
+    room: Classroom, isLabCont: boolean, batch: Batch
+  ) => {
+    const facultyName = faculties.find(f => f.id === subject.facultyId)?.name || 'Unknown';
+    slots.push({
+      id: `gen-slot-${slotId++}`,
+      day,
+      timeSlot: time,
+      subjectId: subject.id,
+      subjectName: subject.name,
+      subjectCode: subject.code,
+      facultyId: subject.facultyId,
+      facultyName,
+      classroomId: room.id,
+      classroomName: room.name,
+      type: subject.type,
+      semester: config.semester as any,
+      division: config.division as any,
+      department: config.department as any,
+      isLabContinuation: isLabCont,
+      batch,
+    });
+    usedRoomSlots.add(getKey(room.id, day, time));
+  };
 
-    for (const day of shuffledLabDays) {
-      if (scheduled) break;
+  // ── PASS 1: Lab Rotation – one lab period per day ───────────────────────────
+  //
+  // Each day has a 2-hour lab period at a DIFFERENT time:
+  //   Day 0 (Mon) → prefer slot index 4 (15:30–16:30 + 16:30–17:30)
+  //   Day 1 (Tue) → prefer slot index 2 (13:15–14:15 + 14:15–15:15)
+  //   Day 2 (Wed) → prefer slot index 0 (10:45–11:45 + 11:45–12:45)
+  //   Day 3 (Thu) → prefer slot index 4
+  //   Day 4 (Fri) → prefer slot index 2
+  //   Day 5 (Sat) → prefer slot index 0
+  //
+  // Batch rotation: day D, batch[i] → labSubject[(i + D) % numLabs]
 
-      // Look for contiguous time slot pairs
-      for (let t = 0; t < TIME_SLOTS.length - 1; t++) {
-        const time1 = TIME_SLOTS[t];
-        const time2 = TIME_SLOTS[t + 1];
+  const divisionBatches: string[] = BATCHES_PER_DIVISION[config.division]
+    ?? [`${config.division}1`, `${config.division}2`, `${config.division}3`, `${config.division}4`];
+  const numLabs = labSubjects.length;
 
-        if (
-          isFacultyFree(labSubject.facultyId, day, time1) &&
-          isFacultyFree(labSubject.facultyId, day, time2) &&
-          isClassFree(day, time1) &&
-          isClassFree(day, time2)
-        ) {
-          // Find a room available for BOTH slots
-          let labRoom: Classroom | null = null;
-          for (const room of classrooms) {
-            if (!room.isAvailable) continue;
-            if (
-              !usedRoomSlots.has(getKey(room.id, day, time1)) &&
-              !usedRoomSlots.has(getKey(room.id, day, time2))
-            ) {
-              labRoom = room;
-              break;
-            }
-          }
+  // Preferred starting slot index per day (cycles every 3 days)
+  const preferredStartPerDay = [4, 2, 0, 4, 2, 0];
+  const maxStart = TIME_SLOTS.length - 1; // max valid start index (needs t+1 to exist)
 
-          if (labRoom) {
-            addSlot(labSubject, day, time1, labRoom, false);
-            addSlot(labSubject, day, time2, labRoom, true);
-            scheduled = true;
-            break;
-          }
-        }
-      }
+  DAYS.forEach((day, dayIndex) => {
+    if (numLabs === 0) return;
+
+    // Rotation assignment for this day
+    const assignment = divisionBatches.map((batch, i) => ({
+      batch,
+      subject: labSubjects[(i + dayIndex) % numLabs],
+    }));
+
+    // Build ordered scan list starting from preferred time, wrapping around
+    const startT = Math.min(preferredStartPerDay[dayIndex] ?? 0, maxStart - 1);
+    const slotOrder: number[] = [];
+    for (let i = 0; i < maxStart; i++) {
+      slotOrder.push((startT + i) % maxStart);
     }
-  }
 
-  // ─── PASS 2: Spread lectures across the week (1 per subject per day) ───
-  // Go day by day, slot by slot, and assign subjects that still need hours
+    for (const t of slotOrder) {
+      const time1 = TIME_SLOTS[t];
+      const time2 = TIME_SLOTS[t + 1];
+
+      // Skip break slot pair (12:45 doesn't connect to 13:15 cleanly)
+      if (!time1 || !time2) continue;
+
+      // Division must be free in both slots
+      if (!isClassFree(day, time1) || !isClassFree(day, time2)) continue;
+
+      // ALL assigned faculty must be free in both slots
+      const uniqueFacultyIds = [...new Set(assignment.map(a => a.subject.facultyId))];
+      const allFacultyFree = uniqueFacultyIds.every(fId =>
+        isFacultyFree(fId, day, time1) && isFacultyFree(fId, day, time2)
+      );
+      if (!allFacultyFree) continue;
+
+      // Find one unique room per batch (all free in both slots)
+      const takenRooms = new Set<string>();
+      const roomAssignments: Classroom[] = [];
+      for (const _a of assignment) {
+        const room = classrooms.find(r =>
+          r.isAvailable &&
+          !takenRooms.has(r.id) &&
+          !usedRoomSlots.has(getKey(r.id, day, time1)) &&
+          !usedRoomSlots.has(getKey(r.id, day, time2))
+        );
+        if (!room) break;
+        takenRooms.add(room.id);
+        roomAssignments.push(room);
+      }
+      if (roomAssignments.length < assignment.length) continue;
+
+      // ✅ Commit this day's lab period
+      assignment.forEach((a, i) => {
+        addLabSlot(a.subject, day, time1, roomAssignments[i], false, a.batch as Batch);
+        addLabSlot(a.subject, day, time2, roomAssignments[i], true,  a.batch as Batch);
+        usedFacultySlots.add(getKey(a.subject.facultyId, day, time1));
+        usedFacultySlots.add(getKey(a.subject.facultyId, day, time2));
+      });
+
+      // Block the class schedule for this day's lab period
+      classSchedule.add(getKey('class', day, time1));
+      classSchedule.add(getKey('class', day, time2));
+      break; // one lab period per day — move on
+    }
+  });
+
+  // ── PASS 2: Lectures – max 1 per subject per day ────────────────────────────
   for (const day of DAYS) {
     for (const time of TIME_SLOTS) {
-      if (!isClassFree(day, time)) continue; // already occupied (lab or other)
+      if (!isClassFree(day, time)) continue;
 
-      // Find a subject that needs hours and hasn't been scheduled today yet
       const candidate = lecturePool.find(item => {
         if (item.remaining <= 0) return false;
         const dayKey = getSubjectDayKey(item.subject.id, day);
-        if ((subjectDayCount[dayKey] || 0) >= 1) return false; // already has 1 lecture today
+        if ((subjectDayCount[dayKey] || 0) >= 1) return false;
         if (!isFacultyFree(item.subject.facultyId, day, time)) return false;
         return true;
       });
@@ -349,12 +406,11 @@ export function generateSchedule(
     }
   }
 
-  // ─── PASS 3: Fill remaining hours (some subjects may need 2nd lecture on same day) ───
+  // ── PASS 3: Fill remaining lecture hours ────────────────────────────────────
   for (const day of DAYS) {
     for (const time of TIME_SLOTS) {
       if (!isClassFree(day, time)) continue;
 
-      // Find any subject that still needs hours
       const candidate = lecturePool.find(item => {
         if (item.remaining <= 0) return false;
         if (!isFacultyFree(item.subject.facultyId, day, time)) return false;
@@ -371,7 +427,7 @@ export function generateSchedule(
     }
   }
 
-  // Sort slots chronologically
+  // Sort chronologically
   slots.sort((a, b) => {
     const dayDiff = DAYS.indexOf(a.day) - DAYS.indexOf(b.day);
     if (dayDiff !== 0) return dayDiff;

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { LayoutGrid, List, Filter, Download, Eye, CheckCircle, Clock, BookOpen } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import GridView from '../components/Timetable/GridView';
 import ListView from '../components/Timetable/ListView';
-import { DEPARTMENTS, SEMESTERS, DIVISIONS } from '../utils/constants';
+import { DEPARTMENTS, SEMESTERS, DIVISIONS, DAYS, TIME_SLOTS } from '../utils/constants';
+import { TimetableSlot } from '../utils/types';
 
 type ViewMode = 'grid' | 'list' | 'faculty';
 
@@ -35,7 +36,163 @@ export default function TimetableViewPage() {
     updateTimetableStatus(id, 'Active');
   };
 
-  // ── Feature 3: Aggregate ALL active timetables for faculty view ────────────
+  // ── PDF Export ──────────────────────────────────────────────────────────────
+  const downloadAsPdf = useCallback(() => {
+    const tt = timetables.find(t => t.id === selectedTimetableId) || timetables[0];
+    if (!tt) return;
+
+    const now = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const conflictCount = tt.conflicts.filter((c: { resolved: boolean }) => !c.resolved).length;
+
+    const blocks = [
+      { label: '10:45-12:45', s1: TIME_SLOTS[0], s2: TIME_SLOTS[1] },
+      { label: '13:15-15:15', s1: TIME_SLOTS[2], s2: TIME_SLOTS[3] },
+      { label: '15:30-17:30', s1: TIME_SLOTS[4], s2: TIME_SLOTS[5] },
+    ];
+
+    const buildCell = (day: string, s1: string, s2: string): string => {
+      const labSlots = tt.slots
+        .filter(s => s.day === day && s.timeSlot === s1 && s.type === 'Lab' && s.batch && !s.isLabContinuation)
+        .sort((a, b) => (a.batch ?? '').localeCompare(b.batch ?? ''));
+
+      if (labSlots.length > 0) {
+        const rows = labSlots.map(s =>
+          '<div class="br">' +
+          '<span class="bb">' + (s.batch ?? '') + '</span> ' +
+          '<b class="bs">' + s.subjectCode + '</b> ' +
+          '<span class="bf">' + (s.facultyName.split(' ').pop() ?? '') + '</span>' +
+          '<span class="bR">' + s.classroomName + '</span>' +
+          '</div>'
+        ).join('');
+        return '<td class="labtd"><div class="lph">Lab Period</div>' + rows + '</td>';
+      }
+
+      const e1 = tt.slots.filter(s => s.day === day && s.timeSlot === s1 && !s.isLabContinuation && !(s.type === 'Lab' && s.batch));
+      const e2 = tt.slots.filter(s => s.day === day && s.timeSlot === s2 && !s.isLabContinuation && !(s.type === 'Lab' && s.batch));
+
+      const card = (s: (typeof e1)[0], tLabel: string) =>
+        '<div class="' + (s.type === 'Tutorial' ? 'tc' : 'lc') + '">' +
+        '<div class="ct">' + tLabel + '</div>' +
+        '<div class="cs">' + s.subjectCode + '</div>' +
+        '<div class="cn">' + s.subjectName + '</div>' +
+        '<div class="cf">' + (s.facultyName.split(' ').pop() ?? '') + ' | ' + s.classroomName + '</div>' +
+        '</div>';
+
+      let inner = '';
+      if (e1.length > 0) inner += card(e1[0], s1.split(' - ')[0]);
+      if (e2.length > 0) inner += card(e2[0], s2.split(' - ')[0]);
+      return inner ? '<td>' + inner + '</td>' : '<td class="ec"></td>';
+    };
+
+    const thRow = DAYS.map(d => '<th>' + d.toUpperCase() + '</th>').join('');
+    const bodyRows = blocks.map((b, i) => {
+      const cells = DAYS.map(d => buildCell(d, b.s1, b.s2)).join('');
+      return '<tr class="' + (i % 2 === 0 ? 'er' : 'or') + '"><td class="tm">' + b.label.replace('-', '<br>') + '</td>' + cells + '</tr>';
+    }).join('');
+
+    // Precision-fit CSS for A4 landscape single page
+    // Usable height: 202mm. Breakdown:
+    //   header: 13mm | legend: 6mm | thead: 7mm | 3xrows: 56mm each | footer: 4mm = 202mm
+    const css = [
+      '* { box-sizing:border-box; margin:0; padding:0; }',
+      'html, body { width:289mm; height:202mm; overflow:hidden; }',
+      'body { font-family:Arial,sans-serif; background:#fff; color:#1e293b; font-size:8.5px; padding:0; }',
+
+      // Header — 13mm
+      '.hd { background:linear-gradient(135deg,#312e81,#7c3aed); color:#fff; border-radius:6px;',
+      '       display:flex; justify-content:space-between; align-items:center;',
+      '       padding:3.5mm 5mm; height:13mm; margin-bottom:1.5mm; }',
+      '.hn h1 { font-size:13px; font-weight:700; }',
+      '.hn p  { font-size:8px; opacity:.82; margin-top:1px; }',
+      '.hi    { text-align:right; font-size:8px; opacity:.82; }',
+      '.sc    { display:inline-block; background:rgba(255,255,255,.22); border-radius:12px;',
+      '         padding:1px 8px; font-weight:700; font-size:10px; margin-top:2px; }',
+
+      // Legend — 6mm
+      '.lg { display:flex; gap:10px; height:6mm; align-items:center;',
+      '      margin-bottom:1mm; font-size:8px; color:#64748b; }',
+      '.li { display:flex; align-items:center; gap:3px; }',
+      '.dot{ width:8px; height:8px; border-radius:2px; flex-shrink:0; }',
+      '.dl { background:#bfdbfe; } .dp { background:#e9d5ff; } .dt { background:#bbf7d0; }',
+
+      // Table — takes remaining space (table-layout:fixed critical for equal columns)
+      'table { width:289mm; border-collapse:collapse; table-layout:fixed; }',
+      'th { background:#1e1b4b; color:#c7d2fe; font-size:9px; font-weight:700;',
+      '     padding:0; height:7mm; text-align:center; border:1px solid #3730a3; }',
+      'td { border:1px solid #cbd5e1; padding:2mm 2.5mm; vertical-align:top; height:56mm; overflow:hidden; }',
+      'td.ec { background:#f8fafc; }',
+      'tr.er td { background:#f9fafb; }',
+      'tr.or td { background:#eef2ff; }',
+
+      // Time column
+      '.tm { background:#1e1b4b !important; color:#818cf8; font-size:9px; font-weight:700;',
+      '      text-align:center; width:60px; vertical-align:middle !important; line-height:1.6; }',
+
+      // Lecture card — compact for 56mm row
+      '.lc,.tc { border-radius:4px; padding:2.5mm 3mm; margin-bottom:2mm; line-height:1.4; }',
+      '.lc { background:#dbeafe; border-left:3px solid #3b82f6; }',
+      '.tc { background:#dcfce7; border-left:3px solid #22c55e; }',
+      '.ct { font-size:7.5px; color:#64748b; font-weight:600; }',
+      '.cs { font-weight:800; font-size:11px; color:#1e40af; margin-top:1px; }',
+      '.cn { font-size:8.5px; color:#334155; margin-top:1px; }',
+      '.cf { font-size:7.5px; color:#64748b; margin-top:2px; }',
+
+      // Lab period cell
+      '.labtd { background:#faf5ff; border:2px solid #a78bfa !important; padding:2mm 3mm; vertical-align:top; height:56mm; overflow:hidden; }',
+      '.lph { font-weight:800; color:#6d28d9; font-size:10px; margin-bottom:2mm; padding-bottom:1.5mm; border-bottom:1px solid #ddd8fe; }',
+      '.br { display:flex; align-items:center; gap:4px; font-size:8.5px; margin-bottom:2mm;',
+      '      padding-bottom:1.5mm; border-bottom:1px dotted #e9d5ff; }',
+      '.br:last-child { border-bottom:none; margin-bottom:0; }',
+      '.bb { background:#7c3aed; color:#fff; border-radius:3px; padding:1px 4px;',
+      '      font-size:8px; font-weight:700; flex-shrink:0; min-width:20px; text-align:center; }',
+      '.bs { font-weight:800; color:#312e81; flex-shrink:0; font-size:9px; }',
+      '.bf { color:#475569; flex-shrink:0; }',
+      '.bR { color:#6d28d9; margin-left:auto; flex-shrink:0; font-size:8px; font-weight:600; }',
+
+      // Footer — 4mm
+      '.ft { height:4mm; display:flex; justify-content:space-between; align-items:center;',
+      '      margin-top:1mm; font-size:7.5px; color:#94a3b8; }',
+
+      '@media print {',
+      '  @page { size:A4 landscape; margin:4mm; }',
+      '  html,body { width:289mm; height:202mm; overflow:hidden; }',
+      '  table { page-break-inside:avoid; }',
+      '  tr { page-break-inside:avoid; page-break-after:avoid; }',
+      '}'
+    ].join(' ');
+
+    const html =
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + tt.name + '</title>' +
+      '<style>' + css + '</style></head><body>' +
+      '<div class="hd">' +
+        '<div class="hn"><h1>' + tt.name + '</h1>' +
+        '<p>' + tt.semester + ' &bull; Division ' + tt.division + ' &bull; ' + tt.department + '</p></div>' +
+        '<div class="hi">Generated: ' + now + '<div class="sc">Score: ' + tt.fitnessScore + '%</div></div>' +
+      '</div>' +
+      '<div class="lg">' +
+        '<div class="li"><div class="dot dl"></div>Lecture (1hr)</div>' +
+        '<div class="li"><div class="dot dp"></div>Lab Period (2hrs)</div>' +
+        '<div class="li"><div class="dot dt"></div>Tutorial</div>' +
+        '<div class="li" style="margin-left:auto;font-size:7.5px">[Batch][Code][Faculty][Room]</div>' +
+      '</div>' +
+      '<table>' +
+        '<thead><tr><th style="width:60px">TIME</th>' + thRow + '</tr></thead>' +
+        '<tbody>' + bodyRows + '</tbody>' +
+      '</table>' +
+      '<div class="ft">' +
+        '<span>&copy; ' + new Date().getFullYear() + ' ' + tt.department + ' &mdash; Auto-generated</span>' +
+        '<span>' + conflictCount + ' unresolved conflict(s)</span>' +
+      '</div>' +
+      '</body></html>';
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Please allow popups to export PDF.'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 800);
+  }, [timetables, selectedTimetableId]);
+  // ── Aggregate ALL active timetables for faculty view ─────────────────────
   const allActiveTimetables = timetables.filter(t => t.status === 'Active');
 
   return (
@@ -63,8 +220,12 @@ export default function TimetableViewPage() {
                 </button>
               ))}
             </div>
-            <button className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors">
-              <Download className="w-3.5 h-3.5" /> Export
+            <button
+              onClick={downloadAsPdf}
+              disabled={!timetables.length}
+              className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-3.5 h-3.5" /> Export PDF
             </button>
           </div>
         </div>
