@@ -11,7 +11,13 @@ export const TIME_SLOTS = [
 export const SUBJECT_TYPES = ['Lecture', 'Tutorial', 'Lab'] as const;
 export const DEPARTMENTS = ['Computer Science', 'Information Technology', 'Electronics', 'Mechanical', 'Civil'] as const;
 export const SEMESTERS = ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4', 'Sem 5', 'Sem 6', 'Sem 7', 'Sem 8'] as const;
-export const DIVISIONS = ['A', 'B'] as const;
+export const DIVISIONS = ['A', 'B', 'C', 'D'] as const;
+export const BATCHES_PER_DIVISION: Record<string, string[]> = {
+  A: ['A1', 'A2', 'A3', 'A4'],
+  B: ['B1', 'B2', 'B3', 'B4'],
+  C: ['C1', 'C2', 'C3', 'C4'],
+  D: ['D1', 'D2', 'D3', 'D4'],
+};
 
 export const SESSION_COLORS: Record<string, string> = {
   Lecture: 'bg-blue-100 text-blue-800 border-blue-300',

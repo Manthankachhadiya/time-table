@@ -15,9 +15,22 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
   const { timetables, faculties, subjects, classrooms } = storeState;
   const activeTimetables = timetables.filter(t => t.status === 'Active');
 
+  // ─── Fuzzy faculty matcher ─────────────────────────────────────────────────
+  // Matches names like "NBN sir", "prof. nbn", "nbn", "prof nbn", etc.
+  const findFaculty = () => {
+    // Strip common honorifics
+    const cleaned = q.replace(/\b(prof\.?|professor|sir|ma'?am|dr\.?|mr\.?|ms\.?|mrs\.?)\b/g, '').trim();
+    // Try matching any word from the cleaned query against faculty name tokens
+    const queryWords = cleaned.split(/\s+/).filter(w => w.length >= 2);
+    return faculties.find(f => {
+      const nameWords = f.name.toLowerCase().split(/[\s.]+/).filter(w => w.length >= 2);
+      return queryWords.some(qw => nameWords.some(nw => nw.includes(qw) || qw.includes(nw)));
+    }) ?? null;
+  };
+
   // Greeting
   if (/^(hi|hello|hey|good morning|good afternoon|good evening|namaste)/.test(q)) {
-    return "Hello! 👋 I'm your Timetable Assistant. I can help you with schedules, faculty workloads, conflicts, room info, and more. What would you like to know?";
+    return "Hello! 👋 I'm your Timetable Assistant. Ask me about schedules, faculty lectures, conflicts, rooms, batches, and more!";
   }
 
   // Active timetables
@@ -37,18 +50,64 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
     return `⚠️ There are ${total} unresolved conflict(s) across timetables:\n${byTT}\n\nGo to the Conflicts page to resolve them.`;
   }
 
-  // Faculty workload
-  if (/faculty|professor|teacher|workload|load/.test(q)) {
-    const nameMatch = faculties.find(f => q.includes(f.name.toLowerCase()) || q.includes(f.email.split('@')[0].toLowerCase()));
-    if (nameMatch) {
-      const slots = activeTimetables.flatMap(t => t.slots.filter(s => s.facultyId === nameMatch.id && !s.isLabContinuation));
-      return `👨‍🏫 ${nameMatch.name}\n• Department: ${nameMatch.department}\n• Specialization: ${nameMatch.specialization}\n• Active sessions: ${slots.length} / ${nameMatch.maxHoursPerWeek}h per week\n• Status: ${slots.length >= nameMatch.maxHoursPerWeek ? '🔴 Fully loaded' : slots.length >= nameMatch.maxHoursPerWeek * 0.7 ? '🟡 Nearly full' : '🟢 Available capacity'}`;
+  // ─── Lecture / lab COUNT queries ──────────────────────────────────────────
+  // "how many lectures of NBN sir", "lecture count for prof dkk", "how many labs does nbn take"
+  const isCountQuery = /how many|count|number of|total lecture|total lab|lecture.*sir|lab.*sir/.test(q);
+  const isLectureQ = /lecture/.test(q) && !/lab/.test(q);
+  const isLabQ = /\blab\b/.test(q) && !/lecture/.test(q);
+
+  if (isCountQuery || /lecture|lab/.test(q)) {
+    const matchedFaculty = findFaculty();
+    if (matchedFaculty) {
+      const allSlots = activeTimetables.flatMap(t =>
+        t.slots.filter(s => s.facultyId === matchedFaculty.id && !s.isLabContinuation)
+      );
+      const lectures = allSlots.filter(s => s.type === 'Lecture');
+      const labs = allSlots.filter(s => s.type === 'Lab');
+      const tutorials = allSlots.filter(s => s.type === 'Tutorial');
+
+      if (isLectureQ) {
+        return `📊 ${matchedFaculty.name} has ${lectures.length} lecture session${lectures.length !== 1 ? 's' : ''} this week across active timetables.\n\nBreakdown:\n${lectures.length === 0 ? '  • No lectures scheduled' : lectures.map(s => `  • ${s.day} ${s.timeSlot}: ${s.subjectName} (${s.semester} Div ${s.division})`).join('\n')}`;
+      }
+      if (isLabQ) {
+        return `🔬 ${matchedFaculty.name} has ${labs.length} lab session${labs.length !== 1 ? 's' : ''} this week.\n\n${labs.length === 0 ? 'No labs scheduled.' : labs.map(s => `• ${s.day} ${s.timeSlot}: ${s.subjectName} — Batch ${s.batch || 'All'}`).join('\n')}`;
+      }
+      // General faculty info with counts
+      return `👨‍🏫 ${matchedFaculty.name}\n• Department: ${matchedFaculty.department}\n• Specialization: ${matchedFaculty.specialization}\n• Lectures this week: ${lectures.length}\n• Lab sessions: ${labs.length}\n• Tutorials: ${tutorials.length}\n• Total sessions: ${allSlots.length} / ${matchedFaculty.maxHoursPerWeek}h max\n• Status: ${allSlots.length >= matchedFaculty.maxHoursPerWeek ? '🔴 Fully loaded' : allSlots.length >= matchedFaculty.maxHoursPerWeek * 0.7 ? '🟡 Nearly full' : '🟢 Available capacity'}`;
+    }
+  }
+
+  // ─── General faculty workload / info ──────────────────────────────────────
+  if (/faculty|professor|teacher|workload|load|who teach|who take|who handles/.test(q) || findFaculty()) {
+    const matchedFaculty = findFaculty();
+    if (matchedFaculty) {
+      const allSlots = activeTimetables.flatMap(t =>
+        t.slots.filter(s => s.facultyId === matchedFaculty.id && !s.isLabContinuation)
+      );
+      const lectures = allSlots.filter(s => s.type === 'Lecture');
+      const labs = allSlots.filter(s => s.type === 'Lab');
+      const tutorials = allSlots.filter(s => s.type === 'Tutorial');
+      return `👨‍🏫 ${matchedFaculty.name}\n• Department: ${matchedFaculty.department}\n• Specialization: ${matchedFaculty.specialization}\n• Lectures this week: ${lectures.length}\n• Lab sessions: ${labs.length}\n• Tutorials: ${tutorials.length}\n• Total sessions: ${allSlots.length} / ${matchedFaculty.maxHoursPerWeek}h max\n• Status: ${allSlots.length >= matchedFaculty.maxHoursPerWeek ? '🔴 Fully loaded' : allSlots.length >= matchedFaculty.maxHoursPerWeek * 0.7 ? '🟡 Nearly full' : '🟢 Available capacity'}`;
     }
     const overloaded = faculties.filter(f => {
       const load = activeTimetables.flatMap(t => t.slots.filter(s => s.facultyId === f.id && !s.isLabContinuation)).length;
       return load >= f.maxHoursPerWeek;
     });
-    return `👥 Faculty Summary:\n• Total faculty: ${faculties.length}\n• Overloaded: ${overloaded.length > 0 ? overloaded.map(f => f.name).join(', ') : 'None'}\n\nAsk me about a specific faculty by name for detailed info!`;
+    return `👥 Faculty Summary:\n• Total faculty: ${faculties.length}\n• Overloaded: ${overloaded.length > 0 ? overloaded.map(f => f.name).join(', ') : 'None'}\n\nAsk me about a specific faculty by name! E.g. "How many lectures does NBN sir have?"`;
+  }
+
+  // ─── Batch queries ─────────────────────────────────────────────────────────
+  if (/batch|a1|a2|a3|a4|b1|b2|b3|b4/.test(q)) {
+    const batchMatch = q.match(/\b([abcd][1-4])\b/i);
+    if (batchMatch) {
+      const batch = batchMatch[1].toUpperCase();
+      const batchSlots = activeTimetables.flatMap(t =>
+        t.slots.filter(s => s.batch === batch && !s.isLabContinuation)
+      );
+      if (batchSlots.length === 0) return `No lab sessions found for Batch ${batch} in active timetables.`;
+      return `🔬 Batch ${batch} Lab Schedule:\n${batchSlots.map(s => `• ${s.day} ${s.timeSlot}: ${s.subjectName} (${s.semester} Div ${s.division}) — ${s.classroomName}`).join('\n')}`;
+    }
+    return "Each division has 4 batches (e.g., A1, A2, A3, A4). Labs are distributed — each batch has a separate lab slot. Ask me about a specific batch like 'A1 schedule'.";
   }
 
   // Rooms / classrooms
@@ -60,11 +119,11 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
   // Subjects
   if (/subject|course|syllabus/.test(q)) {
     const semMatch = q.match(/sem\s*(\d)/i);
-    const divMatch = q.match(/div(?:ision)?\s*([ab])/i);
+    const divMatch = q.match(/div(?:ision)?\s*([abcd])/i);
     let filtered = subjects;
     if (semMatch) filtered = filtered.filter(s => s.semester === `Sem ${semMatch[1]}`);
     if (divMatch) filtered = filtered.filter(s => s.division === divMatch[1].toUpperCase());
-    if (filtered.length === 0) return "No subjects found for that filter. Try asking about 'Sem 4 subjects' or 'Div A subjects'.";
+    if (filtered.length === 0) return "No subjects found for that filter. Try 'Sem 4 subjects' or 'Div A subjects'.";
     const lectures = filtered.filter(s => s.type === 'Lecture').length;
     const labs = filtered.filter(s => s.type === 'Lab').length;
     return `📚 Subjects${semMatch ? ` (Sem ${semMatch[1]})` : ''}${divMatch ? ` Div ${divMatch[1].toUpperCase()}` : ''}:\n• Total: ${filtered.length}\n• Lectures: ${lectures}\n• Labs: ${labs}\n\nSample subjects: ${filtered.slice(0, 3).map(s => s.name).join(', ')}${filtered.length > 3 ? ` and ${filtered.length - 3} more` : ''}`;
@@ -72,7 +131,7 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
 
   // Generate timetable help
   if (/generat|creat|make|build.*timetable/.test(q)) {
-    return "🚀 To generate a timetable:\n1. Go to 'Generate Timetable' in the sidebar\n2. Select Department, Semester, and Division\n3. Choose an algorithm (Genetic Algorithm recommended)\n4. Click 'Generate'\n\nYou can generate multiple options and compare them!";
+    return "🚀 To generate a timetable:\n1. Go to 'Generate Timetable' in the sidebar\n2. Select Department, Semester, and Division\n3. Choose an algorithm (Genetic Algorithm recommended)\n4. Click 'Generate'\n\nLabs are automatically split into 4 batches (e.g. A1–A4)!";
   }
 
   // Schedule / today
@@ -85,7 +144,7 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
         .map(s => ({ ...s, ttName: `${t.semester} Div ${t.division}` }))
     );
     if (todaySlots.length === 0) return `📅 Today is ${today}. No classes scheduled today in the active timetables.`;
-    return `📅 Today (${today}) — ${todaySlots.length} sessions:\n${todaySlots.slice(0, 5).map(s => `• ${s.timeSlot}: ${s.subjectName} [${s.ttName}]`).join('\n')}${todaySlots.length > 5 ? `\n...and ${todaySlots.length - 5} more` : ''}`;
+    return `📅 Today (${today}) — ${todaySlots.length} sessions:\n${todaySlots.slice(0, 6).map(s => `• ${s.timeSlot}: ${s.subjectName} [${(s as any).ttName}]${(s as any).batch ? ` (Batch ${(s as any).batch})` : ''}`).join('\n')}${todaySlots.length > 6 ? `\n...and ${todaySlots.length - 6} more` : ''}`;
   }
 
   // Stats / overview
@@ -95,11 +154,19 @@ function generateBotResponse(input: string, storeState: ReturnType<typeof useSto
 
   // Help
   if (/help|what can you|what do you|how to/.test(q)) {
-    return "🤖 I can help with:\n• **Active timetables** — 'which timetable is active?'\n• **Conflicts** — 'show me conflicts'\n• **Faculty info** — 'workload of Prof. NBN'\n• **Rooms** — 'available classrooms'\n• **Today's schedule** — 'what classes today?'\n• **Subjects** — 'Sem 4 subjects'\n• **Stats** — 'system overview'\n• **Generate** — 'how to generate a timetable'\n\nJust ask naturally!";
+    return "🤖 I can help with:\n• **Faculty sessions** — 'How many lectures does NBN sir have?'\n• **Lab batches** — 'A1 batch schedule'\n• **Active timetables** — 'which timetable is active?'\n• **Conflicts** — 'show me conflicts'\n• **Rooms** — 'available classrooms'\n• **Today's schedule** — 'what classes today?'\n• **Subjects** — 'Sem 4 subjects'\n• **Stats** — 'system overview'\n\nJust ask naturally — I understand faculty names, abbreviations, and more!";
   }
 
-  // Default
-  return "I'm not sure about that specific query. Try asking about conflicts, faculty workloads, active timetables, classrooms, or today's schedule. Type 'help' to see all I can do!";
+  // Last resort: check if there's a faculty name anywhere in the query
+  const lastChanceFaculty = findFaculty();
+  if (lastChanceFaculty) {
+    const allSlots = activeTimetables.flatMap(t =>
+      t.slots.filter(s => s.facultyId === lastChanceFaculty.id && !s.isLabContinuation)
+    );
+    return `👨‍🏫 ${lastChanceFaculty.name}\n• Specialization: ${lastChanceFaculty.specialization}\n• Total sessions this week: ${allSlots.length}\n• Lectures: ${allSlots.filter(s => s.type === 'Lecture').length}\n• Labs: ${allSlots.filter(s => s.type === 'Lab').length}\n• Tutorials: ${allSlots.filter(s => s.type === 'Tutorial').length}\n• Load: ${allSlots.length}/${lastChanceFaculty.maxHoursPerWeek}h`;
+  }
+
+  return "I'm not sure about that. Try asking:\n• 'How many lectures does NBN sir have this week?'\n• 'Show conflicts'\n• 'Today's schedule'\n• 'A2 batch labs'\n• Type 'help' to see all capabilities!";
 }
 
 // ─── Web Speech API types ──────────────────────────────────────────────────────
@@ -322,7 +389,7 @@ export default function ChatBot() {
             <>
               {/* Quick action chips */}
               <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex gap-1.5 overflow-x-auto flex-shrink-0 scrollbar-hide">
-                {['Active timetables', 'Conflicts', 'Today\'s schedule', 'Faculty workload'].map(chip => (
+                {['Active timetables', 'Conflicts', 'NBN sir lectures', 'A1 batch labs', 'Today\'s schedule'].map(chip => (
                   <button
                     key={chip}
                     onClick={() => sendMessage(chip)}

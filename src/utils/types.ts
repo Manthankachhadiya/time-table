@@ -2,6 +2,7 @@ export type SubjectType = 'Lecture' | 'Tutorial' | 'Lab';
 export type Department = 'Computer Science' | 'Information Technology' | 'Electronics' | 'Mechanical' | 'Civil';
 export type Semester = 'Sem 1' | 'Sem 2' | 'Sem 3' | 'Sem 4' | 'Sem 5' | 'Sem 6' | 'Sem 7' | 'Sem 8';
 export type Division = 'A' | 'B' | 'C' | 'D';
+export type Batch = 'A1' | 'A2' | 'A3' | 'A4' | 'B1' | 'B2' | 'B3' | 'B4' | 'C1' | 'C2' | 'C3' | 'C4' | 'D1' | 'D2' | 'D3' | 'D4';
 
 export interface Faculty {
   id: string;
@@ -59,6 +60,7 @@ export interface TimetableSlot {
   division: Division;
   department: Department;
   isLabContinuation?: boolean;
+  batch?: Batch; // Only set for Lab sessions; undefined = all batches (lectures/tutorials)
 }
 
 export interface Timetable {
