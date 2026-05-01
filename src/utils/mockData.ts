@@ -1,22 +1,22 @@
 import { Faculty, Subject, Classroom, Timetable, TimetableSlot, ChangeHistory, Conflict } from './types';
 
 export const mockFaculty: Faculty[] = [
-  { id: 'f1', name: 'Prof. NBN', email: 'nbn@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f2', name: 'Prof. DBV', email: 'dbv@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f3', name: 'Prof. DKK', email: 'dkk@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f4', name: 'Prof. ADM', email: 'adm@edu.ac.in', department: 'Information Technology', specialization: 'OOP', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f5', name: 'Prof. PBT', email: 'pbt@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f6', name: 'Prof. SJV', email: 'sjv@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f7', name: 'Prof. BKB', email: 'bkb@edu.ac.in', department: 'Information Technology', specialization: 'CN', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f8', name: 'Prof. PMC', email: 'pmc@edu.ac.in', department: 'Information Technology', specialization: 'OOP', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f9', name: 'Prof. NSS', email: 'nss@edu.ac.in', department: 'Information Technology', specialization: 'CN', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f10', name: 'Prof. KVP', email: 'kvp@edu.ac.in', department: 'Information Technology', specialization: 'OS', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f11', name: 'Prof. SSC', email: 'ssc@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f12', name: 'Prof. KGK', email: 'kgk@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f13', name: 'Prof. CHM', email: 'chm@edu.ac.in', department: 'Information Technology', specialization: 'OS', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f14', name: 'Prof. HNB', email: 'hnb@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f15', name: 'Prof. PHL', email: 'phl@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
-  { id: 'f16', name: 'Prof. PBA', email: 'pba@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 20, currentLoad: 10, availability: [] },
+  { id: 'f1', name: 'Prof. NBN', email: 'nbn@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f2', name: 'Prof. DBV', email: 'dbv@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f3', name: 'Prof. DKK', email: 'dkk@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f4', name: 'Prof. ADM', email: 'adm@edu.ac.in', department: 'Information Technology', specialization: 'OOP', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f5', name: 'Prof. PBT', email: 'pbt@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f6', name: 'Prof. SJV', email: 'sjv@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f7', name: 'Prof. BKB', email: 'bkb@edu.ac.in', department: 'Information Technology', specialization: 'CN', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f8', name: 'Prof. PMC', email: 'pmc@edu.ac.in', department: 'Information Technology', specialization: 'OOP', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f9', name: 'Prof. NSS', email: 'nss@edu.ac.in', department: 'Information Technology', specialization: 'CN', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f10', name: 'Prof. KVP', email: 'kvp@edu.ac.in', department: 'Information Technology', specialization: 'OS', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f11', name: 'Prof. SSC', email: 'ssc@edu.ac.in', department: 'Information Technology', specialization: 'COA', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f12', name: 'Prof. KGK', email: 'kgk@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f13', name: 'Prof. CHM', email: 'chm@edu.ac.in', department: 'Information Technology', specialization: 'OS', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f14', name: 'Prof. HNB', email: 'hnb@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f15', name: 'Prof. PHL', email: 'phl@edu.ac.in', department: 'Information Technology', specialization: 'ESSRE', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
+  { id: 'f16', name: 'Prof. PBA', email: 'pba@edu.ac.in', department: 'Information Technology', specialization: 'DM', maxHoursPerWeek: 25, currentLoad: 0, availability: [] },
 ];
 
 export const mockSubjects: Subject[] = [

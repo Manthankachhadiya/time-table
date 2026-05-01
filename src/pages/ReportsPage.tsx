@@ -18,7 +18,9 @@ export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState<ReportTab>('faculty');
 
   const allSlots = timetables.flatMap(t => t.slots);
-  const workloadData = getWorkloadData(allSlots, faculties);
+  const activeSlots = timetables.filter(t => t.status === 'Active').flatMap(t => t.slots);
+  // Workload chart uses active timetables so it matches Faculty Management page
+  const workloadData = getWorkloadData(activeSlots, faculties);
 
   // Sessions per day
   const sessionsPerDay = DAYS.map(day => ({
@@ -136,7 +138,7 @@ export default function ReportsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {faculties.map(f => {
-                    const assigned = allSlots.filter(s => s.facultyId === f.id && !s.isLabContinuation).length;
+                    const assigned = activeSlots.filter(s => s.facultyId === f.id && !s.isLabContinuation).length;
                     const loadPct = Math.round((assigned / f.maxHoursPerWeek) * 100);
                     return (
                       <tr key={f.id} className="hover:bg-gray-50 transition-colors">

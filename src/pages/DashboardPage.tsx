@@ -11,12 +11,14 @@ export default function DashboardPage() {
   const { faculties, subjects, classrooms, timetables, setActivePage } = useStore();
 
   const allSlots = timetables.flatMap(t => t.slots);
+  const activeSlots = timetables.filter(t => t.status === 'Active').flatMap(t => t.slots);
   const allConflicts = timetables.flatMap(t => t.conflicts);
   const activeConflicts = allConflicts.filter(c => !c.resolved).length;
   const resolvedConflicts = allConflicts.filter(c => c.resolved).length;
   const activeTimetables = timetables.filter(t => t.status === 'Active').length;
 
-  const workloadData = getWorkloadData(allSlots, faculties);
+  // Workload from active timetables only
+  const workloadData = getWorkloadData(activeSlots, faculties);
 
   const subjectTypeData = [
     { name: 'Lectures', value: subjects.filter(s => s.type === 'Lecture').length, color: '#6366f1' },

@@ -10,13 +10,28 @@ const EMPTY_FACULTY: Partial<Faculty> = {
 };
 
 export default function FacultyManagementPage() {
-  const { faculties, addFaculty, updateFaculty, deleteFaculty } = useStore();
+  const { faculties, timetables, addFaculty, updateFaculty, deleteFaculty } = useStore();
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<Faculty>>(EMPTY_FACULTY);
   const [selectedDay, setSelectedDay] = useState('Monday');
   const [availability, setAvailability] = useState<Record<string, string[]>>({});
+
+  // ── Compute real workload from ACTIVE timetables ────────────────────────────
+  const activeTimetables = timetables.filter(t => t.status === 'Active');
+
+  const getFacultyLoad = (facultyId: string) => {
+    const allSlots = activeTimetables.flatMap(t =>
+      t.slots.filter(s => s.facultyId === facultyId && !s.isLabContinuation)
+    );
+    return {
+      total:    allSlots.length,
+      lectures: allSlots.filter(s => s.type === 'Lecture').length,
+      labs:     allSlots.filter(s => s.type === 'Lab').length,
+      tutorials:allSlots.filter(s => s.type === 'Tutorial').length,
+    };
+  };
 
   const filtered = faculties.filter(f =>
     f.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,7 +94,16 @@ export default function FacultyManagementPage() {
     const pct = (load / max) * 100;
     if (pct >= 90) return 'bg-red-500';
     if (pct >= 70) return 'bg-amber-500';
-    return 'bg-green-500';
+    if (pct >= 1)  return 'bg-indigo-500';
+    return 'bg-gray-200';
+  };
+
+  const getStatusBadge = (load: number, max: number) => {
+    const pct = (load / max) * 100;
+    if (pct >= 90)  return { label: '🔴 Full',      cls: 'bg-red-100 text-red-700' };
+    if (pct >= 70)  return { label: '🟡 Busy',      cls: 'bg-amber-100 text-amber-700' };
+    if (pct >= 1)   return { label: '🟢 Active',    cls: 'bg-indigo-100 text-indigo-700' };
+    return             { label: '⚪ Unscheduled', cls: 'bg-gray-100 text-gray-500' };
   };
 
   return (
@@ -106,9 +130,28 @@ export default function FacultyManagementPage() {
         />
       </div>
 
+      {/* Active timetable notice */}
+      {activeTimetables.length === 0 && (
+        <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+          <span>⚠️</span>
+          <span>No active timetable found. Activate a timetable in <strong>Timetable View</strong> to see real faculty workloads.</span>
+        </div>
+      )}
+      {activeTimetables.length > 0 && (
+        <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
+          <CheckCircle className="w-4 h-4 flex-shrink-0" />
+          <span>Workload calculated from <strong>{activeTimetables.length} active timetable{activeTimetables.length > 1 ? 's' : ''}</strong>: {activeTimetables.map(t => `${t.semester} Div ${t.division}`).join(', ')}</span>
+        </div>
+      )}
+
       {/* Faculty Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filtered.map(faculty => (
+        {filtered.map(faculty => {
+          const load = getFacultyLoad(faculty.id);
+          const pct  = faculty.maxHoursPerWeek > 0 ? Math.min(Math.round((load.total / faculty.maxHoursPerWeek) * 100), 100) : 0;
+          const badge = getStatusBadge(load.total, faculty.maxHoursPerWeek);
+
+          return (
           <div key={faculty.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center gap-3">
@@ -121,7 +164,8 @@ export default function FacultyManagementPage() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => openEdit(faculty)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors">
+                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${badge.cls}`}>{badge.label}</span>
+                <button onClick={() => openEdit(faculty)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors ml-1">
                   <Edit2 className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => handleDelete(faculty.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
@@ -141,20 +185,48 @@ export default function FacultyManagementPage() {
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <Clock className="w-3.5 h-3.5" />
-                <span>{faculty.currentLoad}/{faculty.maxHoursPerWeek} hrs/week</span>
+                {/* Live load from active timetables */}
+                <span className="font-semibold text-gray-700">{load.total}</span>
+                <span>/ {faculty.maxHoursPerWeek} sessions/week</span>
+                {activeTimetables.length > 0 && (
+                  <span className="text-indigo-500 font-medium">(from active TT)</span>
+                )}
               </div>
             </div>
+
+            {/* Lecture / Lab / Tutorial breakdown */}
+            {load.total > 0 && (
+              <div className="flex gap-2 mt-2">
+                {load.lectures > 0 && (
+                  <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                    📖 {load.lectures} Lectures
+                  </span>
+                )}
+                {load.labs > 0 && (
+                  <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                    🔬 {load.labs} Labs
+                  </span>
+                )}
+                {load.tutorials > 0 && (
+                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                    📝 {load.tutorials} Tutorials
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* Workload bar */}
             <div className="mt-3">
               <div className="flex justify-between text-xs mb-1">
                 <span className="text-gray-500">Workload</span>
-                <span className="font-semibold text-gray-700">{Math.round((faculty.currentLoad / faculty.maxHoursPerWeek) * 100)}%</span>
+                <span className={`font-bold ${
+                  pct >= 90 ? 'text-red-600' : pct >= 70 ? 'text-amber-600' : pct >= 1 ? 'text-indigo-600' : 'text-gray-400'
+                }`}>{pct}%</span>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2">
                 <div
-                  className={`h-2 rounded-full transition-all ${getLoadColor(faculty.currentLoad, faculty.maxHoursPerWeek)}`}
-                  style={{ width: `${(faculty.currentLoad / faculty.maxHoursPerWeek) * 100}%` }}
+                  className={`h-2 rounded-full transition-all duration-700 ${getLoadColor(load.total, faculty.maxHoursPerWeek)}`}
+                  style={{ width: `${pct}%` }}
                 />
               </div>
             </div>
@@ -171,7 +243,8 @@ export default function FacultyManagementPage() {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Modal */}
